@@ -15,6 +15,7 @@ import {
   loadDroppedVectorFiles,
   loadDroppedVectorPaths,
 } from "../../lib/tauri-io";
+import { createAppAPI, getPluginManager } from "../../hooks/usePlugins";
 import { registerMbtilesProtocol } from "../../lib/mbtiles";
 import { registerXyzTileProtocol } from "../../lib/xyz-url";
 import { AttributeTable } from "../panels/AttributeTable";
@@ -75,7 +76,9 @@ export function DesktopShell({
   const dragDepthRef = useRef(0);
   const dropMessageTimeoutRef = useRef<number | null>(null);
   const addGeoJsonLayer = useAppStore((s) => s.addGeoJsonLayer);
+  const projectGeneration = useAppStore((s) => s.projectGeneration);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [mapReadyGeneration, setMapReadyGeneration] = useState(0);
   const [dropMessage, setDropMessage] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
   const [layerPanelWidth, setLayerPanelWidth] = useState(
@@ -109,11 +112,27 @@ export function DesktopShell({
   }, []);
 
   useEffect(() => {
+    // Restoration should run only when a project is loaded (projectGeneration)
+    // or the map is reinitialised (mapReadyGeneration), not on every
+    // incremental plugin write-back. projectPlugins is read from the store
+    // snapshot at call time so it is always current without being a dependency.
+    if (!mapReadyGeneration || !mapControllerRef.current) return;
+    getPluginManager().restoreProjectState(
+      useAppStore.getState().projectPlugins,
+      createAppAPI(mapControllerRef),
+    );
+  }, [mapReadyGeneration, projectGeneration]);
+
+  useEffect(() => {
     return () => {
       if (dropMessageTimeoutRef.current !== null) {
         window.clearTimeout(dropMessageTimeoutRef.current);
       }
     };
+  }, []);
+
+  const handleMapControllerReady = useCallback(() => {
+    setMapReadyGeneration((generation) => generation + 1);
   }, []);
 
   const addImportedVectorLayers = useCallback(
@@ -413,7 +432,10 @@ export function DesktopShell({
             layoutOptions.compact ? "min-h-0" : "min-h-72 md:min-h-0"
           }`}
         >
-          <MapCanvas controllerRef={mapControllerRef} />
+          <MapCanvas
+            controllerRef={mapControllerRef}
+            onControllerReady={handleMapControllerReady}
+          />
         </main>
         {layoutOptions.panelsVisible ? (
           <StylePanel onResizeStart={startStylePanelResize} />
